@@ -60,3 +60,6 @@ Requires Python 3. If you're familiar with running python projects, install requ
 4. Edit `index.py` and change the `IMG_A` path to point at that screenshot
 5. Run it with `python3 index.py`
 6. List of materials gets dumped into your terminal. You'll see a window popup with the detection image. If it's borked, open an issue and attach a screenshot of what it looks like, and the original image.
+
+## How does it work?
+// todo, probably make a jupyter notebook or something
