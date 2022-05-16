@@ -18,59 +18,78 @@ def nothing(x):
     pass
 
 
+def rgb2lab(rgb):
+    img = np.zeros((1, 1, 3), dtype=np.uint8)
+    img[0:1, 0:1] = rgb
+
+    lab = cv.cvtColor(img, cv.COLOR_RGB2Lab)
+    return lab[0][0]
+
+templates = [
+    "exploded_panel"
+]
+
 def doThing():
     img = cv.imread(IMG_A)
-    template = cv.imread('./broken.png')
-    mask = cv.imread('./broken2.png', cv.IMREAD_GRAYSCALE)
+    templateImages = [(cv.imread(f'./images/{template}.png'), template) for template in templates]
+
     if img is None:
         sys.exit("Couldn't read image")
 
-    b, g, r = cv.split(img)
+    #img = cv.resize(img, (255, 1080), interpolation=cv.INTER_LANCZOS4)
 
-    #img[:, :, 2] = 0
-
-    img = cv.resize(img, (1920, 1080), interpolation=cv.INTER_LANCZOS4)
-
-    #img = cv.bilateralFilter(img,9, 75, 75)
-    #img = cv.GaussianBlur(img, (3, 3), 0)
-
-    #img = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
-
-    #img = (255-img)
     cv.namedWindow('image')
 
     tbs = ChangeTrackingTrackbars('image')
-    # tbs.add("min").min(0).max(255).initial(0).build()
-    # tbs.add("max").min(1).max(255).initial(255).build()
-    threshold_max = 700
-    tbs.add("threshold").min(0).max(threshold_max).initial(690).build()
-
-    #img = cv.adaptiveThreshold(img, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 9, 2)
-    #img = cv.Laplacian(img, cv.CV_64F, ksize=7)
+    maxThreshold = 700
+    # tbs.add("maskThreshold").min(1).max(255).initial(200).build()
+    # tbs.add("blockSize").min(1).max(100).initial(2).build()
+    tbs.add("threshold").min(0).max(maxThreshold).initial(maxThreshold).build()
 
     cv.imshow('image', img)
 
-    w, h = mask.shape[::-1]
+    blurred = cv.GaussianBlur(img, (3, 3), 0)
+    lab = cv.cvtColor(blurred, cv.COLOR_BGR2Lab)
+
+    redSample = (123, 0, 0)
+    redSampleLab = rgb2lab(redSample)
+
+    redTreshold = 4
+
+    maskThreshold = 200 #tbs.getPos("maskThreshold")
+
+    lower = np.clip([x - redTreshold for x in redSampleLab], 0, 255)
+    upper = np.clip([x + redTreshold for x in redSampleLab], 0, 255)
+    mask = cv.inRange(lab, lower, upper)
+
+    mask = cv.dilate(mask, cv.getStructuringElement(
+        cv.MORPH_RECT, (maskThreshold, maskThreshold)))
+    
+    img = cv.bitwise_and(img, img, mask=mask)
 
     while True:
         if tbs.changed:
             # print('changed')
             tbs.changed = False
 
+            #result = img.copy()
+            threshold = 0.9 #tbs.getPos("threshold") / float(maxThreshold)
             result = img.copy()
+
+            for template, templateName in templateImages:
+                w, h, _ = template.shape
+                res = cv.matchTemplate(img, template, cv.TM_CCOEFF_NORMED)
+
+                loc = np.where(res >= threshold)
+                for pt in zip(*loc[::-1]):
+                    cv.rectangle(result, pt, (pt[0]+w, pt[1]+h), (0, 0, 255), 2)
+                    cv.putText(result, templateName, (pt[0], pt[1]), cv.FONT_HERSHEY_PLAIN, 1, (0, 0, 0), 5)
+                    cv.putText(result, templateName, (pt[0], pt[1]), cv.FONT_HERSHEY_PLAIN, 1, (0, 0, 255), 1)
+
             
-            thresholdI = tbs.getPos("threshold")
-            threshold = thresholdI / float(threshold_max)
+            #result = cv.bitwise_and(result, result, mask=mask)
 
-            res = cv.matchTemplate(result, template, cv.TM_CCOEFF_NORMED)
-            loc = np.where(res >= threshold)
-
-            result = cv.cvtColor(cv.cvtColor(result, cv.COLOR_BGR2GRAY), cv.COLOR_GRAY2BGR)
-
-            for pt in zip(*loc[::-1]):
-                cv.rectangle(result, pt, (pt[0] + w, pt[1] + h), (0, 0, 255), 1)
-
-            cv.putText(result, f'threshold: {threshold:.3f}', (15, 35), cv.FONT_HERSHEY_COMPLEX, 1, (0, 255, 0), 2)
+            cv.putText(result, f'threshold: {threshold:.3f}', (15, 30), cv.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
 
             cv.imshow('image', result)
 
@@ -78,18 +97,6 @@ def doThing():
         if k == EXIT_KEY:
             break
 
-    # ret, img = cv.threshold(img, 200, 255, cv.THRESH_BINARY)
-
-    # img = (255-img)
-
-    # kernel = cv.getStructuringElement(cv.MORPH_RECT, (1,1))
-    # #mg = cv.dilate(img, kernel, iterations=1)
-
-    # cv.imshow("nms", img)
-    # while cv.getWindowProperty("nms", 0) >= 0:
-    #     key = cv.waitKey(0) & 0xFF
-    #     if key == EXIT_KEY:
-    #         break
     cv.destroyAllWindows()
     sys.exit("exiting")
 
