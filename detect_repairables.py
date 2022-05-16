@@ -69,16 +69,17 @@ def doThing():
     redSample = (123, 0, 0)
     redSampleLab = rgb2lab(redSample)
     redTreshold = 4
-    maskThreshold = 200
+    maskThreshold = 120
     lower = np.clip([x - redTreshold for x in redSampleLab], 0, 255)
     upper = np.clip([x + redTreshold for x in redSampleLab], 0, 255)
     mask = cv.inRange(lab, lower, upper)
 
     mask = cv.dilate(mask, cv.getStructuringElement(
         cv.MORPH_RECT, (maskThreshold, maskThreshold)))
-    # img = cv.bitwise_and(img, img, mask=mask)
 
-    #img = cv.medianBlur(img, ksize=3)
+    (x, y, w, h) = cv.boundingRect(mask)
+    mask[:] = (0,)
+    mask[y:y+h, x:x+w] = (255,)
 
     click = None
 
@@ -90,39 +91,28 @@ def doThing():
 
     cv.setMouseCallback('image', mouseListener)
 
-    sift = cv.SIFT_create()
+    tbs.changed = True
 
-    img1 = cv.split(img)[2]
-    img2 = cv.split(templateImages[0][0])[2]
+    tbs.add("rgb").min(0).max(2).initial(0).build()
+    tbs.add("d").min(1).max(50).initial(9).build()
+    tbs.add("sigmaColor").min(1).max(150).initial(75).build()
+    tbs.add("sigmaSpace").min(1).max(150).initial(75).build()
 
-    kp1, des1 = sift.detectAndCompute(img1, mask)
-    kp2, des2 = sift.detectAndCompute(img2, None)
+    imgLowRez = cv.resize(img, (1280, 720), interpolation=cv.INTER_LANCZOS4)
+    maskLowRez = cv.resize(mask, (1280, 720), interpolation=cv.INTER_LINEAR)
 
-    FLANN_INDEX_KDTREE = 1
-    index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    search_params = dict(checks=50)
-    flann = cv.FlannBasedMatcher(index_params, search_params)
+    i = 0
+    cursors = ['|', '/', '-', '\\']
 
-    matches = flann.knnMatch(des1, des2, k=2)
-
-    matchesMask = [[0, 0] for i in range(len(matches))]
-    # ratio test as per Lowe's paper
-    for i, (m, n) in enumerate(matches):
-        if m.distance < 0.7*n.distance:
-            matchesMask[i] = [1, 0]
-
-    draw_params = dict(matchColor=(0, 255, 0),
-                       singlePointColor=(0, 0, 255),
-                       matchesMask=matchesMask,
-                       flags=cv.DrawMatchesFlags_DEFAULT)
-
+    def getCursor():
+        nonlocal i
+        idx = i % len(cursors)
+        i = i+1
+        return cursors[idx]
     while True:
         if tbs.changed:
             # print('changed')
             tbs.changed = False
-
-            result = cv.drawMatchesKnn(
-                img1, kp1, img2, kp2, matches, None, **draw_params)
 
             # offset = tbs.getPos("offset")
             # lower = np.clip([x - offset for x in graySample], 0, 255)
@@ -136,13 +126,24 @@ def doThing():
             # cv.putText(img, f'dist: {dist:.3f}', (438, 395+40),
             #            cv.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
 
-            if click is not None:
-                cv.putText(result, f'({click[0]}, {click[1]})', (15, 90),
-                           cv.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
+            result = cv.bitwise_and(imgLowRez, imgLowRez, mask=maskLowRez)
+            #channels = cv.split(result)
+            # result = #channels[tbs.getPos("rgb")]
 
-            #cv.imshow('image', result)
-            plt.imshow(result,)
-            plt.show()
+            d = tbs.getPos("d")
+            sigmaColor = tbs.getPos("sigmaColor")
+            sigmaSpace = tbs.getPos("sigmaSpace")
+            #result = cv.GaussianBlur(result, (blur,blur), 0)
+            result = cv.bilateralFilter(result, d, sigmaColor, sigmaSpace)
+
+            cv.putText(result, getCursor(), (150, 150),
+                       cv.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
+
+            # if click is not None:
+            #     cv.putText(result, f'({click[0]}, {click[1]})', (15, 90),
+            #                cv.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
+
+            cv.imshow('image', result)
         k = cv.waitKey(1) & 0xFF
         if k == EXIT_KEY:
             break
