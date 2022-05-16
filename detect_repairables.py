@@ -8,23 +8,13 @@ from trackbars import ChangeTrackingTrackbars
 import ColorDescriptor
 import Searcher
 
-IMG_A = "./screenies/b_1440p.png"
+IMG_A = "./screenies/a_1440p.png"
 
 EXIT_KEY = ord('q')
 
-events = [i for i in dir(cv) if 'EVENT' in i]
-print(events)
-
-
-def nothing(x):
-    pass
-
 
 def rgb2lab(rgb):
-    img = np.zeros((1, 1, 3), dtype=np.uint8)
-    img[0:1, 0:1] = rgb
-
-    lab = cv.cvtColor(img, cv.COLOR_RGB2Lab)
+    lab = cv.cvtColor(np.uint8([[rgb]]), cv.COLOR_RGB2Lab)
     return lab[0][0]
 
 
@@ -46,33 +36,6 @@ def readTemplateFile(name):
     return cv.resize(img, (60, 60), interpolation=cv.INTER_LANCZOS4)
 
 
-class CompareImage(object):
-    def __init__(self):
-        self.minimum_commutative_image_diff = 1
-
-    def compare_image(self, image_1, image_2):
-        commutative_image_diff = self.get_image_difference(image_1, image_2)
-
-        if commutative_image_diff < self.minimum_commutative_image_diff:
-            return commutative_image_diff
-        return 10000  # random failure value
-
-    @staticmethod
-    def get_image_difference(image_1, image_2):
-        first_image_hist = cv.calcHist([image_1], [0], None, [256], [0, 256])
-        second_image_hist = cv.calcHist([image_2], [0], None, [256], [0, 256])
-
-        img_hist_diff = cv.compareHist(
-            first_image_hist, second_image_hist, cv.HISTCMP_BHATTACHARYYA)
-        img_template_probability_match = cv.matchTemplate(
-            first_image_hist, second_image_hist, cv.TM_CCOEFF_NORMED)[0][0]
-        img_template_diff = 1 - img_template_probability_match
-
-        # taking only 10% of histogram diff, since it's less accurate than template method
-        commutative_image_diff = (img_hist_diff / 10) + img_template_diff
-        return commutative_image_diff
-
-
 def doThing():
     img = cv.imread(IMG_A)
 
@@ -84,30 +47,36 @@ def doThing():
     if img is None:
         sys.exit("Couldn't read image")
 
-    #img = cv.resize(img, (255, 1080), interpolation=cv.INTER_LANCZOS4)
-
     cv.namedWindow('image')
 
     tbs = ChangeTrackingTrackbars('image')
-    # tbs.add("block").min(3).max(49).initial(3).build()
-    # disti_max = 700
-    # tbs.add("dist").min(0).max(disti_max).initial(10).build()
 
-    #cv.imshow('image', img)
-
+    ## Automatically find our area of interest (rectangle within screenshot which includes the inventory tiles)
+    # If doesn't work, could replace with semiautomatic "drag to select inventory from screenshot".
+    #
+    # Find the area of interest by finding the specific red used in the broken item backgrounds
+    # + nearby colors as compared in Lab color space (better for visual similarity; better results than
+    # RGB comparison for compression schemes like what JPEG uses)
     blurred = cv.GaussianBlur(img, (3, 3), 0)
     lab = cv.cvtColor(blurred, cv.COLOR_BGR2Lab)
     redSample = (123, 0, 0)
     redSampleLab = rgb2lab(redSample)
     redTreshold = 4
-    maskThreshold = getRedMaskExpansion(img.shape[0])
     lower = np.clip([x - redTreshold for x in redSampleLab], 0, 255)
     upper = np.clip([x + redTreshold for x in redSampleLab], 0, 255)
     mask = cv.inRange(lab, lower, upper)
 
+    # Now `mask` is just a mask of the areas with the red bg color.
+    # Dilate the mask so that if the farthest corner of the item is the only
+    # place where the red color exists, the mask will cover the entire theoretical
+    # distance to the edge of the inventory slot.
+    maskThreshold = getRedMaskExpansion(img.shape[0])
     mask = cv.dilate(mask, cv.getStructuringElement(
         cv.MORPH_RECT, (maskThreshold, maskThreshold)))
 
+    # Then calculate a bounding rectangle which covers the entire
+    # dilated mask so that we get a nice rectangle image instead of
+    # a broken one with parts missing out. Use this as the mask.
     (x, y, w, h) = cv.boundingRect(mask)
     mask[:] = (0,)
     mask[y:y+h, x:x+w] = (255,)
@@ -129,72 +98,62 @@ def doThing():
 
     x, y, w, h = cv.boundingRect(maskLowRez)
 
-    i = 0
-    cursors = ['|', '/', '-', '\\']
-
-    def getCursor():
-        nonlocal i
-        idx = i % len(cursors)
-        i = i+1
-        return cursors[idx]
     while True:
         if tbs.changed:
             # print('changed')
             tbs.changed = False
 
-            alpha = tbs.getPos('alpha') / 100.0
-            beta = tbs.getPos('beta')
-
             cropped = imgLowRez[y:y+h, x:x+w]
             result = cropped
 
+            # Add contrast and darken the image so that the bilateral filter
+            # is more effective
             # a = 2.52
             # b = -30
+            alpha = tbs.getPos('alpha') / 100.0
+            beta = tbs.getPos('beta')
             result = cv.convertScaleAbs(result, alpha=alpha, beta=beta)
-
-            # offset = tbs.getPos("offset")
-            # lower = np.clip([x - offset for x in graySample], 0, 255)
-            # upper = np.clip([x + offset for x in graySample], 0, 255)
-            # grayMask = cv.inRange(lab, lower, upper)
-            #result = img.copy()
-
-            #ret = cv.matchShapes(cnt1, cnt2, 1, 0.0)
-            # cv.putText(img, f'dist%: {distRel:.3f}', (438, 395),
-            #            cv.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
-            # cv.putText(img, f'dist: {dist:.3f}', (438, 395+40),
-            #            cv.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 2)
-
-            #result = cv.GaussianBlur(result, (blur,blur), 0)
+            
+            # Blur image
+            # values found experimentally via a trackbar - these values
+            # seem to provide the clearest edges with the laplacian.
             result = cv.bilateralFilter(
                 result, d=23, sigmaColor=83, sigmaSpace=89)
 
             result = cv.split(result)[tbs.getPos('rgb')]
-            #result = (255-result)
 
             kernel = tbs.getPos('kernel')
             if kernel < 1:
                 kernel = 1
             if kernel % 2 == 0:
                 kernel += 1
+            
+            # Run edge detection with Laplacian + normal threshold after the fact
             result = cv.Laplacian(result, cv.CV_64F, ksize=kernel)
             result = cv.convertScaleAbs(np.absolute(result))
-            _, result = cv.threshold(result, tbs.getPos(
-                'treshold'), 255, cv.THRESH_BINARY)
+            _, result = cv.threshold(result,
+                                     tbs.getPos('treshold'),
+                                     255,
+                                     cv.THRESH_BINARY)
 
             close = tbs.getPos('close')
             if close % 2 == 0:
                 close += 1
 
+            # Close (dilate, then erode) the thresholded image to remove
+            # artifacts from Laplacian and other variations from the blur
+            # -> small nearby pixels get merged
             result = cv.morphologyEx(result, cv.MORPH_CLOSE, cv.getStructuringElement(
                 cv.MORPH_RECT, (close, close)))
 
+            ## Find the rectangles.
             # Fill up gaps. Can't just take EXTERNAL contours because there's
             # rubbish because some corners aren't filled.
             contours, _ = cv.findContours(
                 result, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE)
             for cnt in contours:
                 x, y, w, h = cv.boundingRect(cnt)
-                # fill all contour bounding rects as while
+                # fill all contour bounding rects as white -> merge contours in practice
                 cv.rectangle(result, (x, y), (x+w, y+h), 255, -1)
 
             # now get actual rectangle contours
@@ -203,9 +162,10 @@ def doThing():
             bboxes = [cv.boundingRect(cnt) for cnt in contours]
 
             def arc(rect):
+                # calculate aspect ratio
                 x, y, w, h = rect
                 return w/float(h)
-            # filter out cropped squares
+            # filter rectangles
             # (take only those whose aspect ratio is within 0.15 of our target "portrait" rectangle)
             bboxes = [b for b in bboxes if abs(0.85 - arc(b)) <= 0.15]
 
@@ -228,22 +188,29 @@ def doThing():
                 tiles.append((tile, (x, y, w, h)))
                 i += 1
 
+            # 8 bins for H, 12 bins for S, 13 bins for V in HSV color
             cd = ColorDescriptor.ColorDescriptor((8, 12, 13))
 
             featureIndex = []
             for templateName, template in templateImages:
+                # Calculate features for our template (target) images
+                # This should be done outside doThing() but it's so fast that whatever.
+                # The features we use are just based on HSV histograms and they're good
+                # enough for us because we preprocess the image so well that we could
+                # *almost* compare plainly by pixel values. Almost.
                 features = cd.describe(template)
                 featureIndex.append((templateName, np.array(features)))
 
             s1 = Searcher.Searcher("")
             detected_tiles = {}
             for i, (tile, bbox) in enumerate(tiles):
-                print(i)
                 features = np.array(cd.describe(tile))
                 results = s1.searchIdx(featureIndex, features)
 
                 score, name = results[0]
+                # 0.7 determined experimentally to be a good threshold for "not actual match"
                 color = (0, 255, 0) if score < 0.7 else (0, 0, 255)
+                # draw debug rectangles & results
                 cv.rectangle(
                     result, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), color, 2)
                 cv.putText(
@@ -255,11 +222,12 @@ def doThing():
                 cv.putText(
                     result, f'{score:.2f}', (bbox[0], bbox[1]+15+15), cv.FONT_HERSHEY_PLAIN, 0.7, color, 1)
                 if score < 0.7:
+                    # add +1 to this detected item
                     detected_tiles[name] = detected_tiles.get(name, 0) + 1
 
             df = pd.read_csv('materials.csv', sep=',')
             materials = df.groupby('Name')
-            
+
             print(detected_tiles)
 
             objs = []
@@ -269,22 +237,6 @@ def doThing():
                 group["Amount"] *= amount
                 objs.append(group[['Material', 'Amount']])
             print(pd.concat(objs).groupby('Material').agg('sum'))
-
-            # sift = cv.SIFT_create()
-            # templates = []
-            # for templateName, template in templateImages:
-            #     kp, des = sift.detectAndCompute(template, None)
-            #     templates.push((templateName, template, kp, des))
-
-            # candidates = []
-            # for tile in tiles:
-            #     kp, des = sift.detectAndCompute(tile, None)
-            #     candidates.push((tile, kp, des))
-
-            # FLANN_INDEX_KDTREE = 1
-            # index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-            # search_params = dict(checks=50)
-            # flann = cv.FlannBasedMatcher(index_params, search_params)
 
             cv.imshow('image', result)
         k = cv.waitKey(1) & 0xFF
