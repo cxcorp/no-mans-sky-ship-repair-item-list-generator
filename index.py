@@ -8,7 +8,7 @@ from trackbars import ChangeTrackingTrackbars
 import ColorDescriptor
 import Searcher
 
-IMG_A = "./screenies/a_1440p.png"
+IMG_A = "./screenies/a_768p.png"
 
 EXIT_KEY = ord('q')
 
