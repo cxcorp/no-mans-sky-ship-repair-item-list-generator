@@ -43,6 +43,9 @@ class Trackbars:
 
     def add(self, name):
         return TrackbarBuilder(self.window, name, self.onChange)
+    
+    def addUint8(self, name):
+        return self.add(name).min(0).max(255).initial(0)
 
     def getPos(self, name):
         return cv.getTrackbarPos(name, self.window)
