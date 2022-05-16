@@ -53,9 +53,9 @@ Requires Python 3. If you're familiar with running python projects, install requ
 
 0. Download this repository
 1. Install Python 3
-  - You may already have it installed. In a terminal window, type `python3 --version` or `python --version` or `py --version`
+   - You may already have it installed. In a terminal window, type `python3 --version` or `python --version` or `py --version`
 2. Install required libraries
-  - `pip install -r requirements.txt` or `python3 -m pip install -r requirements.txt`
+   - `pip install -r requirements.txt` or `python3 -m pip install -r requirements.txt`
 3. Copy your screenshot into some directory nearby
 4. Edit `index.py` and change the `IMG_A` path to point at that screenshot
 5. Run it with `python3 index.py`
